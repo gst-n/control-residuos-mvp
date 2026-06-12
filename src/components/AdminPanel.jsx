@@ -1,6 +1,17 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useTransition } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { exportCSV, exportExcel, exportPDF } from '../utils/exportUtils'
+
+const CHECKLIST_LABELS = [
+  { key: 'sector_delimitado',          label: 'Sector delimitado y de acceso restringido' },
+  { key: 'piso_impermeabilizado',      label: 'Piso impermeabilizado o con pintura epoxi' },
+  { key: 'bandejas_antiderrame',       label: 'Bandejas antiderrame o de contención' },
+  { key: 'extintor_vigente',           label: 'Extintor vigente' },
+  { key: 'material_absorbente',        label: 'Material absorbente disponible para contingencias' },
+  { key: 'carteleria_identificatoria', label: 'Cartelería identificatoria clara' },
+  { key: 'caracterizacion_residuos',   label: 'Caracterización de los residuos peligrosos según su corriente' },
+  { key: 'manifiestos_certificados',   label: 'Manifiestos de retiro y certificados de disposición final' },
+]
 
 const TIPO_BADGE = {
   Peligroso:  'bg-amber-100 text-amber-700 border border-amber-200',
@@ -9,6 +20,157 @@ const TIPO_BADGE = {
 }
 const TIPO_LABEL = { Peligroso: 'Peligroso', Patologico: 'Patológico', UVA: 'UVA' }
 const PAGE_SIZE = 15
+
+function Field({ label, value }) {
+  if (!value && value !== 0) return null
+  return (
+    <div>
+      <p className="text-xs text-slate-400 mb-0.5">{label}</p>
+      <p className="text-sm text-slate-800">{value}</p>
+    </div>
+  )
+}
+
+function CheckItem({ label, checked }) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <span className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center ${
+        checked ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-300'
+      }`}>
+        {checked
+          ? <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+          : <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+        }
+      </span>
+      <span className={`text-sm leading-snug ${checked ? 'text-slate-700' : 'text-slate-400'}`}>{label}</span>
+    </div>
+  )
+}
+
+function Section({ title, children }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">{title}</h3>
+      {children}
+    </div>
+  )
+}
+
+function RecordDetailModal({ record: r, onClose }) {
+  const regNum = String(r.numero_registro ?? '?').padStart(4, '0')
+  const filename = `registro_${regNum}`
+  const checkedCount = CHECKLIST_LABELS.filter(i => r[i.key]).length
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full sm:max-w-lg max-h-[92dvh] sm:max-h-[88vh] flex flex-col bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden">
+
+        {/* Header */}
+        <div className={`h-1 w-full flex-shrink-0 ${
+          r.tipo_residuo === 'Peligroso' ? 'bg-amber-500' :
+          r.tipo_residuo === 'Patologico' ? 'bg-purple-500' : 'bg-emerald-500'
+        }`} />
+        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-100 flex-shrink-0">
+          <div>
+            <p className="text-xs font-mono font-bold text-brand-700">#{regNum}</p>
+            <p className="font-semibold text-slate-800 text-base leading-tight">{r.nombre_empresa}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${TIPO_BADGE[r.tipo_residuo] ?? 'bg-slate-100 text-slate-600'}`}>
+                {TIPO_LABEL[r.tipo_residuo] ?? r.tipo_residuo}
+              </span>
+              {r.sector_acopio_apto != null && (
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                  r.sector_acopio_apto
+                    ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                    : 'bg-red-100 text-red-700 border border-red-200'
+                }`}>
+                  Sector {r.sector_acopio_apto ? 'Apto' : 'No apto'}
+                </span>
+              )}
+            </div>
+          </div>
+          <button onClick={onClose}
+            className="flex-shrink-0 p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 px-5 py-5 flex flex-col gap-6">
+
+          <Section title="Datos del inspector">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Inspector" value={r.inspectores?.nombre} />
+              <Field label="Email" value={r.inspectores?.email} />
+              <Field label="Fecha de registro" value={new Date(r.fecha_hora_registro).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })} />
+            </div>
+          </Section>
+
+          <Section title="Datos de la empresa">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Nombre" value={r.nombre_empresa} />
+              <Field label="Rubro" value={r.rubro_empresa} />
+              <div className="col-span-2"><Field label="Dirección" value={r.direccion_empresa} /></div>
+            </div>
+          </Section>
+
+          {r.corriente_residuo && (
+            <Section title="Corriente de residuo">
+              <Field label="Corriente clasificada" value={r.corriente_residuo} />
+            </Section>
+          )}
+
+          <Section title="Datos del retiro">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Fecha de retiro" value={r.fecha_retiro} />
+              <Field label="Volumen retirado" value={r.volumen_retirado != null ? `${r.volumen_retirado} ${r.unidad_volumen}` : null} />
+              <Field label="Tipo de documento" value={r.tipo_documento} />
+              <Field label={`N° ${r.tipo_documento ?? 'Documento'}`} value={r.numero_manifiesto_remito} />
+              {r.tipo_documento === 'Manifiesto' && <>
+                <Field label="Operador" value={r.operador} />
+                <Field label="Transportista" value={r.transportista} />
+                <div className="col-span-2"><Field label="N° Certificado de disposición final" value={r.numero_certificados_disposicion} /></div>
+              </>}
+            </div>
+          </Section>
+
+          <Section title={`Estado del sector de acopio — Disp. 185/12 (${checkedCount}/8)`}>
+            <div className="flex flex-col gap-2.5">
+              {CHECKLIST_LABELS.map(item => (
+                <CheckItem key={item.key} label={item.label} checked={!!r[item.key]} />
+              ))}
+            </div>
+          </Section>
+
+          {r.observaciones && (
+            <Section title="Observaciones">
+              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{r.observaciones}</p>
+            </Section>
+          )}
+        </div>
+
+        {/* Footer — exportar */}
+        <div className="flex-shrink-0 border-t border-slate-100 px-5 py-4 flex items-center gap-2">
+          <span className="text-xs text-slate-400 mr-1">Exportar:</span>
+          {[
+            { label: 'CSV',   fn: () => exportCSV([r], filename),   cls: 'border-slate-200 text-slate-600 hover:bg-slate-50' },
+            { label: 'Excel', fn: () => exportExcel([r], filename), cls: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' },
+            { label: 'PDF',   fn: () => exportPDF([r], filename),   cls: 'border-red-200 text-red-600 hover:bg-red-50' },
+          ].map(({ label, fn, cls }) => (
+            <button key={label} onClick={fn}
+              className={`text-xs font-medium px-4 py-2 rounded-lg border transition-all active:scale-95 ${cls}`}>
+              {label}
+            </button>
+          ))}
+          <button onClick={onClose} className="ml-auto btn-secondary text-xs py-2 px-4">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function StatCard({ label, value, color }) {
   return (
@@ -36,9 +198,26 @@ function RecordCard({ r }) {
         <div><span className="text-slate-400">Inspector: </span><span className="text-slate-700">{r.inspectores?.nombre ?? '—'}</span></div>
         <div><span className="text-slate-400">Retiro: </span><span className="text-slate-700">{r.fecha_retiro ?? '—'}</span></div>
         <div><span className="text-slate-400">Volumen: </span><span className="text-slate-700 font-mono">{r.volumen_retirado != null ? `${r.volumen_retirado} ${r.unidad_volumen}` : '—'}</span></div>
-        <div><span className="text-slate-400">Manifiesto: </span><span className="text-slate-700 font-mono text-xs">{r.numero_manifiesto_remito ?? '—'}</span></div>
+        <div>
+          <span className="text-slate-400">{r.tipo_documento ?? 'Doc.'}: </span>
+          <span className="text-slate-700 font-mono">{r.numero_manifiesto_remito ?? '—'}</span>
+        </div>
         {r.corriente_residuo && <div className="col-span-2"><span className="text-slate-400">Corriente: </span><span className="text-slate-700">{r.corriente_residuo}</span></div>}
+        {r.tipo_documento === 'Manifiesto' && r.operador && <div className="col-span-2"><span className="text-slate-400">Operador: </span><span className="text-slate-700">{r.operador}</span></div>}
+        {r.tipo_documento === 'Manifiesto' && r.transportista && <div className="col-span-2"><span className="text-slate-400">Transportista: </span><span className="text-slate-700">{r.transportista}</span></div>}
       </div>
+      {r.sector_acopio_apto != null && (
+        <div className="flex items-center gap-1.5 pt-1">
+          <span className="text-xs text-slate-400">Sector acopio:</span>
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+            r.sector_acopio_apto
+              ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+              : 'bg-red-100 text-red-700 border border-red-200'
+          }`}>
+            {r.sector_acopio_apto ? 'Apto' : 'No apto'}
+          </span>
+        </div>
+      )}
       {r.observaciones && <p className="text-xs text-slate-500 line-clamp-2 border-t border-slate-50 pt-2">{r.observaciones}</p>}
       <p className="text-xs text-slate-300">{new Date(r.fecha_hora_registro).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' })}</p>
     </div>
@@ -47,14 +226,15 @@ function RecordCard({ r }) {
 
 // ─── Tab Registros ─────────────────────────────────────────────────────────
 function TabRegistros({ stats }) {
-  const [registros, setRegistros]     = useState([])
-  const [inspectores, setInspectores] = useState([])
-  const [loading, setLoading]         = useState(true)
-  const [exporting, setExporting]     = useState(false)
-  const [total, setTotal]             = useState(0)
-  const [page, setPage]               = useState(0)
-  const [showFilters, setShowFilters] = useState(false)
-  const [filters, setFilters] = useState({ inspector:'', tipo:'', desde:'', hasta:'', busqueda:'' })
+  const [registros, setRegistros]           = useState([])
+  const [inspectores, setInspectores]       = useState([])
+  const [loading, startLoading]             = useTransition()
+  const [exporting, setExporting]           = useState(false)
+  const [total, setTotal]                   = useState(0)
+  const [page, setPage]                     = useState(0)
+  const [showFilters, setShowFilters]       = useState(false)
+  const [filters, setFilters]               = useState({ inspector:'', tipo:'', desde:'', hasta:'', busqueda:'' })
+  const [selectedRecord, setSelectedRecord] = useState(null)
 
   useEffect(() => {
     supabase.from('inspectores').select('id, nombre').order('nombre')
@@ -76,15 +256,17 @@ function TabRegistros({ stats }) {
   }, [filters, page])
 
   useEffect(() => {
-    setLoading(true)
-    buildQuery(false).then(({ data, count }) => {
+    startLoading(async () => {
+      const { data, count } = await buildQuery(false)
       setRegistros(data || [])
       setTotal(count || 0)
-      setLoading(false)
     })
   }, [buildQuery])
 
-  useEffect(() => { setPage(0) }, [filters])
+  function updateFilters(update) {
+    setFilters(prev => ({ ...prev, ...update }))
+    setPage(0)
+  }
 
   async function handleExport(fn) {
     setExporting(true)
@@ -108,7 +290,7 @@ function TabRegistros({ stats }) {
       {/* Búsqueda + filtros */}
       <div className="flex items-center gap-2">
         <input value={filters.busqueda}
-          onChange={e => setFilters(p => ({ ...p, busqueda: e.target.value }))}
+          onChange={e => updateFilters({ busqueda: e.target.value })}
           className="input-field flex-1" placeholder="Buscar empresa…" />
         <button onClick={() => setShowFilters(v => !v)}
           className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${
@@ -126,21 +308,21 @@ function TabRegistros({ stats }) {
         <div className="card flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Filtros</span>
-            {hasFilters && <button onClick={() => setFilters({ inspector:'', tipo:'', desde:'', hasta:'', busqueda:'' })} className="text-xs text-brand-700 font-medium">Limpiar</button>}
+            {hasFilters && <button onClick={() => { setFilters({ inspector:'', tipo:'', desde:'', hasta:'', busqueda:'' }); setPage(0) }} className="text-xs text-brand-700 font-medium">Limpiar</button>}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <select value={filters.inspector} onChange={e => setFilters(p => ({ ...p, inspector: e.target.value }))} className="input-field col-span-2 sm:col-span-1">
+            <select value={filters.inspector} onChange={e => updateFilters({ inspector: e.target.value })} className="input-field col-span-2 sm:col-span-1">
               <option value="">Todos los inspectores</option>
               {inspectores.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
             </select>
-            <select value={filters.tipo} onChange={e => setFilters(p => ({ ...p, tipo: e.target.value }))} className="input-field">
+            <select value={filters.tipo} onChange={e => updateFilters({ tipo: e.target.value })} className="input-field">
               <option value="">Todos los tipos</option>
               <option value="Peligroso">Peligroso</option>
               <option value="Patologico">Patológico</option>
               <option value="UVA">UVA</option>
             </select>
-            <div><label className="label">Desde</label><input type="date" value={filters.desde} onChange={e => setFilters(p => ({ ...p, desde: e.target.value }))} className="input-field" /></div>
-            <div><label className="label">Hasta</label><input type="date" value={filters.hasta} onChange={e => setFilters(p => ({ ...p, hasta: e.target.value }))} className="input-field" /></div>
+            <div><label className="label">Desde</label><input type="date" value={filters.desde} onChange={e => updateFilters({ desde: e.target.value })} className="input-field" /></div>
+            <div><label className="label">Hasta</label><input type="date" value={filters.hasta} onChange={e => updateFilters({ hasta: e.target.value })} className="input-field" /></div>
           </div>
         </div>
       )}
@@ -170,7 +352,11 @@ function TabRegistros({ stats }) {
       <div className="flex flex-col gap-3 md:hidden">
         {loading ? <p className="text-center py-10 text-slate-400 text-sm">Cargando…</p>
           : registros.length === 0 ? <p className="text-center py-10 text-slate-400 text-sm">Sin registros.</p>
-          : registros.map(r => <RecordCard key={r.id} r={r} />)}
+          : registros.map(r => (
+            <button key={r.id} onClick={() => setSelectedRecord(r)} className="text-left w-full">
+              <RecordCard r={r} />
+            </button>
+          ))}
       </div>
 
       {/* Tabla desktop */}
@@ -179,26 +365,38 @@ function TabRegistros({ stats }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100">
-                {['#Reg','Inspector','Tipo','Empresa','Corriente','Volumen','Manifiesto','Fecha retiro','Registrado'].map(h => (
+                {['#Reg','Inspector','Tipo','Empresa','Corriente','Volumen','Documento','N° Doc.','Operador','Fecha retiro','Sector acopio','Registrado'].map(h => (
                   <th key={h} className="text-left text-xs font-semibold text-slate-400 uppercase tracking-wide px-4 py-3 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-14 text-slate-400 text-sm">Cargando…</td></tr>
+                <tr><td colSpan={12} className="text-center py-14 text-slate-400 text-sm">Cargando…</td></tr>
               ) : registros.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-14 text-slate-400 text-sm">Sin registros.</td></tr>
+                <tr><td colSpan={12} className="text-center py-14 text-slate-400 text-sm">Sin registros.</td></tr>
               ) : registros.map((r, i) => (
-                <tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50 transition-colors ${i % 2 !== 0 ? 'bg-slate-50/40' : ''}`}>
+                <tr key={r.id} onClick={() => setSelectedRecord(r)} className={`border-b border-slate-50 hover:bg-brand-50 transition-colors cursor-pointer ${i % 2 !== 0 ? 'bg-slate-50/40' : ''}`}>
                   <td className="px-4 py-3 font-mono text-xs font-semibold text-brand-700 whitespace-nowrap">#{String(r.numero_registro ?? '?').padStart(4,'0')}</td>
                   <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">{r.inspectores?.nombre ?? '—'}</td>
                   <td className="px-4 py-3"><span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${TIPO_BADGE[r.tipo_residuo] ?? 'bg-slate-100 text-slate-600'}`}>{TIPO_LABEL[r.tipo_residuo] ?? r.tipo_residuo}</span></td>
                   <td className="px-4 py-3 max-w-[160px]"><p className="font-medium text-slate-700 truncate">{r.nombre_empresa}</p>{r.rubro_empresa && <p className="text-xs text-slate-400 truncate">{r.rubro_empresa}</p>}</td>
                   <td className="px-4 py-3 text-slate-500 text-xs max-w-[130px]"><p className="truncate">{r.corriente_residuo ?? '—'}</p></td>
                   <td className="px-4 py-3 text-slate-600 whitespace-nowrap font-mono text-xs">{r.volumen_retirado != null ? `${r.volumen_retirado} ${r.unidad_volumen}` : '—'}</td>
+                  <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">{r.tipo_documento || '—'}</td>
                   <td className="px-4 py-3 text-slate-500 whitespace-nowrap font-mono text-xs">{r.numero_manifiesto_remito || '—'}</td>
+                  <td className="px-4 py-3 text-slate-500 text-xs max-w-[120px]"><p className="truncate">{r.operador || '—'}</p></td>
                   <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">{r.fecha_retiro || '—'}</td>
+                  <td className="px-4 py-3">
+                    {r.sector_acopio_apto != null
+                      ? <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                          r.sector_acopio_apto
+                            ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                            : 'bg-red-100 text-red-700 border border-red-200'
+                        }`}>{r.sector_acopio_apto ? 'Apto' : 'No apto'}</span>
+                      : <span className="text-slate-300 text-xs">—</span>
+                    }
+                  </td>
                   <td className="px-4 py-3 text-slate-400 whitespace-nowrap text-xs">{new Date(r.fecha_hora_registro).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' })}</td>
                 </tr>
               ))}
@@ -217,6 +415,10 @@ function TabRegistros({ stats }) {
           </div>
         </div>
       )}
+
+      {selectedRecord && (
+        <RecordDetailModal record={selectedRecord} onClose={() => setSelectedRecord(null)} />
+      )}
     </div>
   )
 }
@@ -227,13 +429,12 @@ function TabUsuarios({ currentAdminId }) {
   const [loading, setLoading]   = useState(true)
   const [updating, setUpdating] = useState(null) // id del usuario que se está actualizando
 
-  async function fetchUsuarios() {
-    const { data } = await supabase.from('inspectores').select('*').order('nombre')
-    setUsuarios(data || [])
-    setLoading(false)
-  }
-
-  useEffect(() => { fetchUsuarios() }, [])
+  useEffect(() => {
+    supabase.from('inspectores').select('*').order('nombre').then(({ data }) => {
+      setUsuarios(data || [])
+      setLoading(false)
+    })
+  }, [])
 
   async function toggleRol(user) {
     if (user.id === currentAdminId) return // no puede quitarse admin a sí mismo

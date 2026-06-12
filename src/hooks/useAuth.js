@@ -1,30 +1,14 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
 export function useAuth() {
-  const [session, setSession]   = useState(undefined) // undefined = todavía cargando
-  const [profile, setProfile]   = useState(null)
-  const fetchingRef             = useRef(false)
+  const [session, setSession] = useState(undefined) // undefined = todavía cargando
+  const [profile, setProfile] = useState(null)
+  const fetchingRef           = useRef(false)
 
   const loading = session === undefined
 
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      if (event === 'SIGNED_OUT' || !newSession) {
-        setSession(null)
-        setProfile(null)
-        return
-      }
-      setSession(newSession)
-      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-        await fetchOrCreateProfile(newSession)
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
-  async function fetchOrCreateProfile(sess) {
+  const fetchOrCreateProfile = useCallback(async (sess) => {
     if (fetchingRef.current) return
     fetchingRef.current = true
     try {
@@ -57,7 +41,23 @@ export function useAuth() {
     } finally {
       fetchingRef.current = false
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      if (event === 'SIGNED_OUT' || !newSession) {
+        setSession(null)
+        setProfile(null)
+        return
+      }
+      setSession(newSession)
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+        await fetchOrCreateProfile(newSession)
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [fetchOrCreateProfile])
 
   async function refreshProfile() {
     if (!session) return

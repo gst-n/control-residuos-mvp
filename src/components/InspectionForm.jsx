@@ -24,12 +24,28 @@ const TIPO_STYLES = {
   UVA:        { bar: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800 border border-emerald-200' },
 }
 
+const CHECKLIST_ITEMS = [
+  { key: 'sector_delimitado',       label: 'Sector delimitado y de acceso restringido' },
+  { key: 'piso_impermeabilizado',   label: 'Piso impermeabilizado o con pintura epoxi' },
+  { key: 'bandejas_antiderrame',    label: 'Bandejas antiderrame o de contención' },
+  { key: 'extintor_vigente',        label: 'Extintor vigente' },
+  { key: 'material_absorbente',     label: 'Material absorbente disponible para contingencias' },
+  { key: 'carteleria_identificatoria', label: 'Cartelería identificatoria clara' },
+  { key: 'caracterizacion_residuos',   label: 'Caracterización de los residuos peligrosos según su corriente' },
+  { key: 'manifiestos_certificados',   label: 'Manifiestos de retiro y certificados de disposición final' },
+]
+
+const EMPTY_CHECKLIST = Object.fromEntries(CHECKLIST_ITEMS.map(i => [i.key, false]))
+
 const EMPTY = {
   nombre_empresa: '', direccion_empresa: '', rubro_empresa: '',
   volumen_retirado: '', unidad_volumen: 'm³',
+  tipo_documento: '',
   numero_manifiesto_remito: '',
+  operador: '', transportista: '', numero_certificados_disposicion: '',
   fecha_retiro: new Date().toISOString().split('T')[0],
   observaciones: '', corriente_residuo: '', corriente_otra: '',
+  ...EMPTY_CHECKLIST,
 }
 
 export default function InspectionForm({ profile, tipoSeleccionado, onBack, onSuccess }) {
@@ -40,9 +56,12 @@ export default function InspectionForm({ profile, tipoSeleccionado, onBack, onSu
   const styles = TIPO_STYLES[tipoSeleccionado?.id] ?? TIPO_STYLES['Peligroso']
 
   function handleChange(e) {
-    const { name, value } = e.target
-    setForm(prev => ({ ...prev, [name]: value }))
+    const { name, value, type, checked } = e.target
+    setForm(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }))
   }
+
+  const checkedCount = CHECKLIST_ITEMS.filter(i => form[i.key]).length
+  const esApto = checkedCount === CHECKLIST_ITEMS.length
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -64,10 +83,23 @@ export default function InspectionForm({ profile, tipoSeleccionado, onBack, onSu
       rubro_empresa:            form.rubro_empresa.trim() || null,
       volumen_retirado:         form.volumen_retirado ? parseFloat(form.volumen_retirado) : null,
       unidad_volumen:           form.unidad_volumen,
+      tipo_documento:           form.tipo_documento || null,
       numero_manifiesto_remito: form.numero_manifiesto_remito.trim() || null,
+      operador:                 form.tipo_documento === 'Manifiesto' ? form.operador.trim() || null : null,
+      transportista:            form.tipo_documento === 'Manifiesto' ? form.transportista.trim() || null : null,
+      numero_certificados_disposicion: form.tipo_documento === 'Manifiesto' ? form.numero_certificados_disposicion.trim() || null : null,
       fecha_retiro:             form.fecha_retiro || null,
       observaciones:            form.observaciones.trim() || null,
       corriente_residuo:        corrienteValue,
+      sector_delimitado:        form.sector_delimitado,
+      piso_impermeabilizado:    form.piso_impermeabilizado,
+      bandejas_antiderrame:     form.bandejas_antiderrame,
+      extintor_vigente:         form.extintor_vigente,
+      material_absorbente:      form.material_absorbente,
+      carteleria_identificatoria: form.carteleria_identificatoria,
+      caracterizacion_residuos:   form.caracterizacion_residuos,
+      manifiestos_certificados:   form.manifiestos_certificados,
+      sector_acopio_apto:         esApto,
     }).select('numero_registro').maybeSingle()
 
     setSaving(false)
@@ -142,6 +174,46 @@ export default function InspectionForm({ profile, tipoSeleccionado, onBack, onSu
             )}
           </section>
 
+          {/* Checklist sector de acopio — Disp. 185/12 */}
+          <section className="card flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                Estado del sector de acopio
+              </h2>
+              {checkedCount > 0 && (
+                <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${
+                  esApto
+                    ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                    : 'bg-red-100 text-red-700 border border-red-200'
+                }`}>
+                  {esApto ? 'Apto' : `${checkedCount}/${CHECKLIST_ITEMS.length}`}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 -mt-2">Disposición 185/12 — Provincia de Chubut</p>
+            <div className="flex flex-col gap-3">
+              {CHECKLIST_ITEMS.map(item => (
+                <label key={item.key} className="flex items-start gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    name={item.key}
+                    checked={form[item.key]}
+                    onChange={handleChange}
+                    className="mt-0.5 w-4 h-4 rounded border-slate-300 text-emerald-600 accent-emerald-600 flex-shrink-0 cursor-pointer"
+                  />
+                  <span className={`text-sm leading-snug transition-colors ${
+                    form[item.key] ? 'text-slate-700' : 'text-slate-500'
+                  }`}>
+                    {item.label}
+                  </span>
+                </label>
+              ))}
+            </div>
+            {checkedCount === 0 && (
+              <p className="text-xs text-slate-400 italic">Marcá los ítems presentes en el sector.</p>
+            )}
+          </section>
+
           {/* Retiro */}
           <section className="card flex flex-col gap-4">
             <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Datos del retiro</h2>
@@ -160,10 +232,52 @@ export default function InspectionForm({ profile, tipoSeleccionado, onBack, onSu
               </div>
             </div>
             <div>
-              <label className="label">N° Manifiesto / Remito</label>
-              <input name="numero_manifiesto_remito" value={form.numero_manifiesto_remito} onChange={handleChange}
-                className="input-field" placeholder="Ej: MAN-2024-00123" />
+              <label className="label">Tipo de documento</label>
+              <div className="flex gap-2">
+                {['Manifiesto', 'Remito'].map(tipo => (
+                  <button
+                    key={tipo}
+                    type="button"
+                    onClick={() => setForm(prev => ({ ...prev, tipo_documento: prev.tipo_documento === tipo ? '' : tipo }))}
+                    className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                      form.tipo_documento === tipo
+                        ? 'bg-slate-800 text-white border-slate-800'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    {tipo}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {form.tipo_documento && (
+              <div>
+                <label className="label">N° de {form.tipo_documento}</label>
+                <input name="numero_manifiesto_remito" value={form.numero_manifiesto_remito} onChange={handleChange}
+                  className="input-field" placeholder={form.tipo_documento === 'Manifiesto' ? 'Ej: MAN-2024-00123' : 'Ej: REM-2024-00456'} />
+              </div>
+            )}
+
+            {form.tipo_documento === 'Manifiesto' && (
+              <>
+                <div>
+                  <label className="label">Operador</label>
+                  <input name="operador" value={form.operador} onChange={handleChange}
+                    className="input-field" placeholder="Nombre del operador autorizado" />
+                </div>
+                <div>
+                  <label className="label">Transportista</label>
+                  <input name="transportista" value={form.transportista} onChange={handleChange}
+                    className="input-field" placeholder="Empresa transportista" />
+                </div>
+                <div>
+                  <label className="label">N° Certificado de disposición final</label>
+                  <input name="numero_certificados_disposicion" value={form.numero_certificados_disposicion} onChange={handleChange}
+                    className="input-field" placeholder="Ej: CERT-2024-00789" />
+                </div>
+              </>
+            )}
             <div>
               <label className="label">Fecha de retiro</label>
               <input name="fecha_retiro" type="date" value={form.fecha_retiro} onChange={handleChange}
